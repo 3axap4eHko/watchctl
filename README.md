@@ -1,5 +1,8 @@
 # watchctl
 
+[![CI](https://github.com/3axap4eHko/watchctl/actions/workflows/ci.yml/badge.svg)](https://github.com/3axap4eHko/watchctl/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](./LICENSE)
+
 Process supervisor with wait, watch, and retry phases.
 
 ## Overview
