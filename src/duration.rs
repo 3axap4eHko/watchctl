@@ -28,8 +28,14 @@ pub fn parse_duration(s: &str) -> Result<Duration> {
     let duration = match suffix {
         "ms" => Duration::from_millis(num),
         "s" => Duration::from_secs(num),
-        "m" => Duration::from_secs(num * 60),
-        "h" => Duration::from_secs(num * 3600),
+        "m" => Duration::from_secs(
+            num.checked_mul(60)
+                .ok_or_else(|| Error::InvalidDuration(format!("{s}: value too large")))?,
+        ),
+        "h" => Duration::from_secs(
+            num.checked_mul(3600)
+                .ok_or_else(|| Error::InvalidDuration(format!("{s}: value too large")))?,
+        ),
         _ => unreachable!(),
     };
 
@@ -75,5 +81,29 @@ mod tests {
         assert!(parse_duration("abc").is_err());
         assert!(parse_duration("30x").is_err());
         assert!(parse_duration("-5s").is_err());
+    }
+
+    #[test]
+    fn parse_minutes_overflow() {
+        let err = parse_duration("18446744073709551615m")
+            .expect_err("minute conversion should detect overflow");
+        match err {
+            Error::InvalidDuration(message) => {
+                assert!(message.contains("value too large"));
+            }
+            other => panic!("unexpected error: {other}"),
+        }
+    }
+
+    #[test]
+    fn parse_hours_overflow() {
+        let err = parse_duration("18446744073709551615h")
+            .expect_err("hour conversion should detect overflow");
+        match err {
+            Error::InvalidDuration(message) => {
+                assert!(message.contains("value too large"));
+            }
+            other => panic!("unexpected error: {other}"),
+        }
     }
 }

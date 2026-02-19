@@ -156,7 +156,7 @@ Options marked with `*` can be specified multiple times.
 
 | Option | Description | Default |
 |--------|-------------|---------|
-| `--retry-times <N>` | Number of retries | 0 |
+| `--retry-times <N>` | Number of retries (0 = infinite) | no retries |
 | `--retry-delay <DURATION>` | Delay between retries | 1s |
 | `--retry-backoff` | Double delay after each retry (max 5m) | false |
 | `--retry-if <CODES>` * | Retry only on these exit codes | any non-zero |

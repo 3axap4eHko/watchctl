@@ -1,6 +1,6 @@
 use crate::cli::Args;
 use crate::duration::parse_duration;
-use crate::error::Result;
+use crate::error::{Error, Result};
 use std::collections::HashSet;
 use std::time::Duration;
 
@@ -38,7 +38,7 @@ pub struct WatchConfig {
 
 #[derive(Debug)]
 pub struct RetryConfig {
-    pub times: u32,
+    pub times: Option<u32>,
     pub delay: Duration,
     pub backoff: bool,
     pub exit_codes: Option<HashSet<i32>>,
@@ -63,13 +63,22 @@ impl Config {
 
         let watch = WatchConfig {
             http: args.watch_http,
-            http_interval: parse_duration(&args.watch_http_interval)?,
+            http_interval: parse_non_zero_duration(
+                &args.watch_http_interval,
+                "--watch-http-interval",
+            )?,
             http_timeout: parse_duration(&args.watch_http_timeout)?,
             tcp: args.watch_tcp,
-            tcp_interval: parse_duration(&args.watch_tcp_interval)?,
+            tcp_interval: parse_non_zero_duration(
+                &args.watch_tcp_interval,
+                "--watch-tcp-interval",
+            )?,
             tcp_timeout: parse_duration(&args.watch_tcp_timeout)?,
             files: args.watch_file,
-            file_interval: parse_duration(&args.watch_file_interval)?,
+            file_interval: parse_non_zero_duration(
+                &args.watch_file_interval,
+                "--watch-file-interval",
+            )?,
             timeout: args.watch_timeout.map(|s| parse_duration(&s)).transpose()?,
         };
 
@@ -103,5 +112,62 @@ impl Config {
             retry,
             command: args.command,
         })
+    }
+}
+
+fn parse_non_zero_duration(raw: &str, option_name: &str) -> Result<Duration> {
+    let duration = parse_duration(raw)?;
+    if duration.is_zero() {
+        return Err(Error::InvalidDuration(format!(
+            "{option_name} must be greater than 0"
+        )));
+    }
+    Ok(duration)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn base_args() -> Args {
+        Args {
+            wait_tcp: Vec::new(),
+            wait_tcp_timeout: "5s".to_string(),
+            wait_http: Vec::new(),
+            wait_http_timeout: "5s".to_string(),
+            wait_file: Vec::new(),
+            wait_delay: Vec::new(),
+            wait_timeout: "30s".to_string(),
+            watch_http: Vec::new(),
+            watch_http_interval: "10s".to_string(),
+            watch_http_timeout: "5s".to_string(),
+            watch_tcp: Vec::new(),
+            watch_tcp_interval: "10s".to_string(),
+            watch_tcp_timeout: "5s".to_string(),
+            watch_file: Vec::new(),
+            watch_file_interval: "10s".to_string(),
+            watch_timeout: None,
+            retry_times: None,
+            retry_delay: "1s".to_string(),
+            retry_backoff: false,
+            retry_if: Vec::new(),
+            retry_with_wait: false,
+            log: None,
+            command: vec!["true".to_string()],
+        }
+    }
+
+    #[test]
+    fn rejects_zero_watch_http_interval() {
+        let mut args = base_args();
+        args.watch_http_interval = "0s".to_string();
+
+        let err = Config::from_args(args).expect_err("watch interval of zero should be rejected");
+        match err {
+            Error::InvalidDuration(msg) => {
+                assert!(msg.contains("--watch-http-interval"));
+            }
+            other => panic!("unexpected error: {other}"),
+        }
     }
 }
