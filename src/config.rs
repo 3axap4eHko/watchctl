@@ -33,7 +33,15 @@ pub struct WatchConfig {
     pub tcp_timeout: Duration,
     pub files: Vec<String>,
     pub file_interval: Duration,
+    pub delay: Duration,
     pub timeout: Option<Duration>,
+}
+
+#[derive(Debug)]
+pub enum RetryCondition {
+    AnyNonZero,
+    Only(HashSet<i32>),
+    Except(HashSet<i32>),
 }
 
 #[derive(Debug)]
@@ -41,7 +49,7 @@ pub struct RetryConfig {
     pub times: Option<u32>,
     pub delay: Duration,
     pub backoff: bool,
-    pub exit_codes: Option<HashSet<i32>>,
+    pub condition: RetryCondition,
     pub with_wait: bool,
 }
 
@@ -79,30 +87,28 @@ impl Config {
                 &args.watch_file_interval,
                 "--watch-file-interval",
             )?,
+            delay: args
+                .watch_delay
+                .as_deref()
+                .map(parse_duration)
+                .transpose()?
+                .unwrap_or_default(),
             timeout: args.watch_timeout.map(|s| parse_duration(&s)).transpose()?,
         };
 
-        let exit_codes = if args.retry_if.is_empty() {
-            None
+        let condition = if !args.retry_if.is_empty() {
+            RetryCondition::Only(parse_exit_codes(&args.retry_if)?)
+        } else if !args.retry_except.is_empty() {
+            RetryCondition::Except(parse_exit_codes(&args.retry_except)?)
         } else {
-            let mut codes = HashSet::new();
-            for s in &args.retry_if {
-                for code_str in s.split(',') {
-                    let code: i32 = code_str
-                        .trim()
-                        .parse()
-                        .map_err(|_| crate::error::Error::InvalidExitCode(code_str.to_string()))?;
-                    codes.insert(code);
-                }
-            }
-            Some(codes)
+            RetryCondition::AnyNonZero
         };
 
         let retry = RetryConfig {
             times: args.retry_times,
             delay: parse_duration(&args.retry_delay)?,
             backoff: args.retry_backoff,
-            exit_codes,
+            condition,
             with_wait: args.retry_with_wait,
         };
 
@@ -113,6 +119,20 @@ impl Config {
             command: args.command,
         })
     }
+}
+
+fn parse_exit_codes(raw: &[String]) -> Result<HashSet<i32>> {
+    let mut codes = HashSet::new();
+    for s in raw {
+        for code_str in s.split(',') {
+            let code: i32 = code_str
+                .trim()
+                .parse()
+                .map_err(|_| Error::InvalidExitCode(code_str.to_string()))?;
+            codes.insert(code);
+        }
+    }
+    Ok(codes)
 }
 
 fn parse_non_zero_duration(raw: &str, option_name: &str) -> Result<Duration> {
@@ -146,11 +166,13 @@ mod tests {
             watch_tcp_timeout: "5s".to_string(),
             watch_file: Vec::new(),
             watch_file_interval: "10s".to_string(),
+            watch_delay: None,
             watch_timeout: None,
             retry_times: None,
             retry_delay: "1s".to_string(),
             retry_backoff: false,
             retry_if: Vec::new(),
+            retry_except: Vec::new(),
             retry_with_wait: false,
             log: None,
             command: vec!["true".to_string()],
@@ -169,5 +191,15 @@ mod tests {
             }
             other => panic!("unexpected error: {other}"),
         }
+    }
+
+    #[test]
+    fn parses_watch_delay() {
+        let mut args = base_args();
+        args.watch_delay = Some("3s".to_string());
+
+        let config = Config::from_args(args).expect("watch delay should parse");
+
+        assert_eq!(config.watch.delay, Duration::from_secs(3));
     }
 }

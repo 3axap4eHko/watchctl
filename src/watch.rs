@@ -89,20 +89,29 @@ async fn run_health_checks(config: &WatchConfig) -> std::result::Result<(), Stri
 
     for url in &config.http {
         let check = HttpCheck::new(url.clone(), Arc::clone(http_client.as_ref().unwrap()));
+        let initial_delay = config.delay;
         let interval_duration = config.http_interval;
-        join_set.spawn(async move { run_periodic_check(Box::new(check), interval_duration).await });
+        join_set.spawn(async move {
+            run_periodic_check(Box::new(check), initial_delay, interval_duration).await
+        });
     }
 
     for addr in &config.tcp {
         let check = TcpCheck::new(addr.clone(), config.tcp_timeout);
+        let initial_delay = config.delay;
         let interval_duration = config.tcp_interval;
-        join_set.spawn(async move { run_periodic_check(Box::new(check), interval_duration).await });
+        join_set.spawn(async move {
+            run_periodic_check(Box::new(check), initial_delay, interval_duration).await
+        });
     }
 
     for path in &config.files {
         let check = FileCheck::new(path);
+        let initial_delay = config.delay;
         let interval_duration = config.file_interval;
-        join_set.spawn(async move { run_periodic_check(Box::new(check), interval_duration).await });
+        join_set.spawn(async move {
+            run_periodic_check(Box::new(check), initial_delay, interval_duration).await
+        });
     }
 
     while let Some(result) = join_set.join_next().await {
@@ -121,8 +130,13 @@ async fn run_health_checks(config: &WatchConfig) -> std::result::Result<(), Stri
 
 async fn run_periodic_check(
     check: Box<dyn Check>,
+    initial_delay: Duration,
     interval_duration: Duration,
 ) -> std::result::Result<(), String> {
+    if !initial_delay.is_zero() {
+        sleep(initial_delay).await;
+    }
+
     let mut ticker = interval(interval_duration);
     ticker.tick().await;
 
@@ -133,5 +147,77 @@ async fn run_periodic_check(
             Err(msg) => return Err(msg),
         }
         ticker.tick().await;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
+    struct CountingCheck {
+        calls: Arc<AtomicUsize>,
+    }
+
+    impl Check for CountingCheck {
+        fn check(&self) -> crate::check::CheckFuture<'_> {
+            let calls = Arc::clone(&self.calls);
+            Box::pin(async move {
+                calls.fetch_add(1, Ordering::SeqCst);
+                Ok(())
+            })
+        }
+
+        fn description(&self) -> &str {
+            "counting"
+        }
+    }
+
+    #[tokio::test]
+    async fn watch_delay_defers_first_probe() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let task = tokio::spawn(run_periodic_check(
+            Box::new(CountingCheck {
+                calls: Arc::clone(&calls),
+            }),
+            Duration::from_millis(200),
+            Duration::from_secs(60),
+        ));
+
+        sleep(Duration::from_millis(50)).await;
+        assert_eq!(calls.load(Ordering::SeqCst), 0);
+
+        sleep(Duration::from_millis(200)).await;
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+        task.abort();
+    }
+
+    #[tokio::test]
+    async fn zero_watch_delay_keeps_immediate_first_probe() {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let task = tokio::spawn(run_periodic_check(
+            Box::new(CountingCheck {
+                calls: Arc::clone(&calls),
+            }),
+            Duration::ZERO,
+            Duration::from_secs(60),
+        ));
+
+        tokio::time::timeout(Duration::from_millis(100), async {
+            loop {
+                if calls.load(Ordering::SeqCst) > 0 {
+                    break;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .expect("first probe should run without an explicit watch delay");
+
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+
+        task.abort();
     }
 }

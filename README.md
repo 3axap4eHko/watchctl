@@ -71,11 +71,15 @@ watchctl --wait-tcp localhost:5432 --wait-http http://localhost:8080/health -- .
 
 ### Watch Phase
 
-Monitor health while running. HTTPS URLs are supported.
+Monitor health while running. HTTPS URLs are supported. `--watch-delay` delays only the first
+health probe; `--watch-timeout` still starts counting from process launch.
 
 ```bash
 # Watch HTTP endpoint
 watchctl --watch-http http://localhost:8080/health --watch-http-interval 30s -- ./my-app
+
+# Wait 5s before the first watch probe
+watchctl --watch-http http://localhost:8080/health --watch-delay 5s -- ./my-app
 
 # Watch TCP port
 watchctl --watch-tcp localhost:8080 -- ./my-app
@@ -103,6 +107,9 @@ watchctl --retry-times 5 --retry-delay 1s --retry-backoff -- ./my-app
 
 # Retry only on specific exit codes
 watchctl --retry-times 3 --retry-if 1,2,3 -- ./my-app
+
+# Retry on any failure except permanent errors
+watchctl --retry-times 3 --retry-except 78,77 -- ./my-app
 
 # Re-run wait phase before each retry
 watchctl --retry-times 3 --retry-with-wait --wait-tcp localhost:5432 -- ./my-app
@@ -150,6 +157,7 @@ Options marked with `*` can be specified multiple times.
 | `--watch-tcp-timeout <DURATION>` | TCP connection timeout | 5s |
 | `--watch-file <PATH>` * | Health check file existence | - |
 | `--watch-file-interval <DURATION>` | File check interval | 10s |
+| `--watch-delay <DURATION>` | Delay before first watch health check | - |
 | `--watch-timeout <DURATION>` | Maximum runtime | - |
 
 ### Retry Phase
@@ -160,6 +168,7 @@ Options marked with `*` can be specified multiple times.
 | `--retry-delay <DURATION>` | Delay between retries | 1s |
 | `--retry-backoff` | Double delay after each retry (max 5m) | false |
 | `--retry-if <CODES>` * | Retry only on these exit codes | any non-zero |
+| `--retry-except <CODES>` * | Retry on any non-zero except these codes | - |
 | `--retry-with-wait` | Re-run wait phase before retry | false |
 
 ### General
@@ -175,8 +184,8 @@ Options marked with `*` can be specified multiple times.
 | Code | Meaning |
 |------|---------|
 | 0 | Command completed successfully |
-| 1-255 | Command's exit code (clamped to this range) |
-| 1 | Wait timeout, health check failure, or watch timeout |
+| 1 | Wait timeout, health check failure, watch timeout, or a command exit code of 1 |
+| 2-255 | Command's exit code (clamped to this range) |
 
 ## Duration Format
 
@@ -202,6 +211,7 @@ watchctl --wait-tcp localhost:5432 --wait-timeout 60s -- ./my-app
 watchctl \
   --wait-tcp localhost:5432 \
   --watch-http http://localhost:8080/health \
+  --watch-delay 5s \
   --watch-http-interval 30s \
   --retry-times 5 \
   --retry-delay 5s \

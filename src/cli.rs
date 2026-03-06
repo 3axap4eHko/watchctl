@@ -143,6 +143,14 @@ pub struct Args {
     pub watch_file_interval: String,
 
     #[arg(
+        long = "watch-delay",
+        value_name = "DURATION",
+        help_heading = "Watch Phase",
+        help = "Delay before the first watch health check runs"
+    )]
+    pub watch_delay: Option<String>,
+
+    #[arg(
         long = "watch-timeout",
         value_name = "DURATION",
         help_heading = "Watch Phase",
@@ -180,9 +188,20 @@ pub struct Args {
         value_name = "CODES",
         action = clap::ArgAction::Append,
         help_heading = "Retry Phase",
-        help = "Retry only when exit code matches (e.g. 1,2,3); repeatable"
+        help = "Retry only when exit code matches (e.g. 1,2,3); repeatable",
+        conflicts_with = "retry_except"
     )]
     pub retry_if: Vec<String>,
+
+    #[arg(
+        long = "retry-except",
+        value_name = "CODES",
+        action = clap::ArgAction::Append,
+        help_heading = "Retry Phase",
+        help = "Retry on any non-zero exit except these codes (e.g. 78,77); repeatable",
+        conflicts_with = "retry_if"
+    )]
+    pub retry_except: Vec<String>,
 
     #[arg(
         long = "retry-with-wait",
