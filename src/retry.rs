@@ -1,4 +1,4 @@
-use crate::config::{RetryCondition, RetryConfig};
+use crate::config::RetryConfig;
 use std::process::ExitStatus;
 use std::time::Duration;
 use tokio::time::sleep;
@@ -30,17 +30,19 @@ impl RetryState {
             return false;
         }
 
-        let code = exit_status.and_then(|s| s.code());
+        let Some(code) = exit_status.and_then(|s| s.code()) else {
+            return true;
+        };
 
-        match (&config.condition, code) {
-            (RetryCondition::AnyNonZero, Some(0)) => false,
-            (RetryCondition::AnyNonZero, _) => true,
-            (RetryCondition::Only(codes), Some(c)) => codes.contains(&c),
-            (RetryCondition::Only(_), None) => true,
-            (RetryCondition::Except(_), Some(0)) => false,
-            (RetryCondition::Except(codes), Some(c)) => !codes.contains(&c),
-            (RetryCondition::Except(_), None) => true,
+        if config.retry_if.is_empty() && config.retry_except.is_empty() {
+            return code != 0;
         }
+
+        let allowed = config.retry_if.contains(&code);
+        let not_excepted =
+            !config.retry_except.is_empty() && code != 0 && !config.retry_except.contains(&code);
+
+        allowed || not_excepted
     }
 
     pub async fn wait_before_retry(&mut self, config: &RetryConfig) {
@@ -71,12 +73,13 @@ mod tests {
     #[cfg(unix)]
     use std::os::unix::process::ExitStatusExt;
 
-    fn retry_config(condition: RetryCondition) -> RetryConfig {
+    fn retry_config(retry_if: HashSet<i32>, retry_except: HashSet<i32>) -> RetryConfig {
         RetryConfig {
             times: Some(3),
             delay: Duration::from_secs(1),
             backoff: false,
-            condition,
+            retry_if,
+            retry_except,
             with_wait: false,
         }
     }
@@ -100,7 +103,7 @@ mod tests {
 
     #[test]
     fn any_non_zero_retries_only_failures() {
-        let config = retry_config(RetryCondition::AnyNonZero);
+        let config = retry_config(HashSet::new(), HashSet::new());
         let state = RetryState::new(&config);
 
         assert!(!state.should_retry(&config, Some(status(0))));
@@ -109,7 +112,7 @@ mod tests {
 
     #[test]
     fn only_retries_selected_exit_codes() {
-        let config = retry_config(RetryCondition::Only(HashSet::from([1, 3])));
+        let config = retry_config(HashSet::from([1, 3]), HashSet::new());
         let state = RetryState::new(&config);
 
         assert!(state.should_retry(&config, Some(status(1))));
@@ -119,7 +122,7 @@ mod tests {
 
     #[test]
     fn except_skips_excluded_exit_codes_and_success() {
-        let config = retry_config(RetryCondition::Except(HashSet::from([2, 78])));
+        let config = retry_config(HashSet::new(), HashSet::from([2, 78]));
         let state = RetryState::new(&config);
 
         assert!(state.should_retry(&config, Some(status(1))));
@@ -128,22 +131,34 @@ mod tests {
         assert!(!state.should_retry(&config, Some(status(0))));
     }
 
+    #[test]
+    fn combined_if_and_except_form_a_union() {
+        let config = retry_config(HashSet::from([0]), HashSet::from([42]));
+        let state = RetryState::new(&config);
+
+        assert!(state.should_retry(&config, Some(status(0))));
+        assert!(state.should_retry(&config, Some(status(1))));
+        assert!(!state.should_retry(&config, Some(status(42))));
+    }
+
     #[cfg(unix)]
     #[test]
-    fn signaled_processes_follow_non_zero_retry_conditions() {
-        let any_non_zero = retry_config(RetryCondition::AnyNonZero);
-        let only = retry_config(RetryCondition::Only(HashSet::from([1])));
-        let except = retry_config(RetryCondition::Except(HashSet::from([1])));
+    fn signaled_processes_always_retry() {
+        let any_non_zero = retry_config(HashSet::new(), HashSet::new());
+        let only = retry_config(HashSet::from([1]), HashSet::new());
+        let except = retry_config(HashSet::new(), HashSet::from([1]));
+        let combined = retry_config(HashSet::from([0]), HashSet::from([42]));
         let signaled = Some(signaled_status(9));
 
         assert!(RetryState::new(&any_non_zero).should_retry(&any_non_zero, signaled));
         assert!(RetryState::new(&only).should_retry(&only, signaled));
         assert!(RetryState::new(&except).should_retry(&except, signaled));
+        assert!(RetryState::new(&combined).should_retry(&combined, signaled));
     }
 
     #[test]
     fn exhausted_retries_override_condition() {
-        let config = retry_config(RetryCondition::AnyNonZero);
+        let config = retry_config(HashSet::new(), HashSet::new());
         let state = RetryState {
             attempts_remaining: Some(0),
             current_delay: Duration::from_secs(1),

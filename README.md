@@ -111,9 +111,16 @@ watchctl --retry-times 3 --retry-if 1,2,3 -- ./my-app
 # Retry on any failure except permanent errors
 watchctl --retry-times 3 --retry-except 78,77 -- ./my-app
 
+# Combine: restart on every exit, including success, except a clean shutdown code
+watchctl --retry-times 0 --retry-if 0 --retry-except 42 -- ./my-app
+
 # Re-run wait phase before each retry
 watchctl --retry-times 3 --retry-with-wait --wait-tcp localhost:5432 -- ./my-app
 ```
+
+`--retry-if` and `--retry-except` can be used together. A retry happens when the exit
+code matches `--retry-if`, or when it is a non-zero code not listed in `--retry-except`.
+With neither flag, any non-zero exit is retried.
 
 ### Logging
 

@@ -188,8 +188,7 @@ pub struct Args {
         value_name = "CODES",
         action = clap::ArgAction::Append,
         help_heading = "Retry Phase",
-        help = "Retry only when exit code matches (e.g. 1,2,3); repeatable",
-        conflicts_with = "retry_except"
+        help = "Retry when exit code matches (e.g. 1,2,3); combinable with --retry-except; repeatable"
     )]
     pub retry_if: Vec<String>,
 
@@ -198,8 +197,7 @@ pub struct Args {
         value_name = "CODES",
         action = clap::ArgAction::Append,
         help_heading = "Retry Phase",
-        help = "Retry on any non-zero exit except these codes (e.g. 78,77); repeatable",
-        conflicts_with = "retry_if"
+        help = "Retry on any non-zero exit except these codes (e.g. 78,77); combinable with --retry-if; repeatable"
     )]
     pub retry_except: Vec<String>,
 

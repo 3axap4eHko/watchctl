@@ -38,18 +38,12 @@ pub struct WatchConfig {
 }
 
 #[derive(Debug)]
-pub enum RetryCondition {
-    AnyNonZero,
-    Only(HashSet<i32>),
-    Except(HashSet<i32>),
-}
-
-#[derive(Debug)]
 pub struct RetryConfig {
     pub times: Option<u32>,
     pub delay: Duration,
     pub backoff: bool,
-    pub condition: RetryCondition,
+    pub retry_if: HashSet<i32>,
+    pub retry_except: HashSet<i32>,
     pub with_wait: bool,
 }
 
@@ -96,19 +90,12 @@ impl Config {
             timeout: args.watch_timeout.map(|s| parse_duration(&s)).transpose()?,
         };
 
-        let condition = if !args.retry_if.is_empty() {
-            RetryCondition::Only(parse_exit_codes(&args.retry_if)?)
-        } else if !args.retry_except.is_empty() {
-            RetryCondition::Except(parse_exit_codes(&args.retry_except)?)
-        } else {
-            RetryCondition::AnyNonZero
-        };
-
         let retry = RetryConfig {
             times: args.retry_times,
             delay: parse_duration(&args.retry_delay)?,
             backoff: args.retry_backoff,
-            condition,
+            retry_if: parse_exit_codes(&args.retry_if)?,
+            retry_except: parse_exit_codes(&args.retry_except)?,
             with_wait: args.retry_with_wait,
         };
 
