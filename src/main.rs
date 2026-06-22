@@ -60,14 +60,15 @@ async fn run(args: cli::Args) -> Result<ExitCode> {
 
     let mut retry_state = RetryState::new(&config.retry);
     let mut run_wait = true;
+    let mut term = signal::TerminationListener::new();
 
     loop {
         if run_wait {
             select! {
                 biased;
-                term = signal::await_termination() => {
-                    warn!("received {} during wait phase, exiting", term.name);
-                    return Ok(ExitCode::from(term.exit_code));
+                signal = term.recv() => {
+                    warn!("received {} during wait phase, exiting", signal.name);
+                    return Ok(ExitCode::from(signal.exit_code));
                 }
                 result = wait::run_wait_phase(&config.wait) => {
                     if let Err(e) = result {
@@ -81,7 +82,7 @@ async fn run(args: cli::Args) -> Result<ExitCode> {
         info!("starting command: {:?}", config.command);
         let process = Process::spawn(&config.command)?;
 
-        let status = match watch::run_watch_phase(&config.watch, process).await? {
+        let status = match watch::run_watch_phase(&config.watch, process, &mut term).await? {
             WatchResult::ProcessExited(status) => status,
             WatchResult::HealthCheckFailed(_) | WatchResult::Timeout => {
                 return Ok(ExitCode::FAILURE);
@@ -97,9 +98,9 @@ async fn run(args: cli::Args) -> Result<ExitCode> {
 
         select! {
             biased;
-            term = signal::await_termination() => {
-                warn!("received {} before retry, exiting", term.name);
-                return Ok(ExitCode::from(term.exit_code));
+            signal = term.recv() => {
+                warn!("received {} before retry, exiting", signal.name);
+                return Ok(ExitCode::from(signal.exit_code));
             }
             _ = retry_state.wait_before_retry(&config.retry) => {}
         }

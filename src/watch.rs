@@ -2,7 +2,7 @@ use crate::check::{Check, FileCheck, HttpCheck, TcpCheck, build_http_client};
 use crate::config::WatchConfig;
 use crate::error::Result;
 use crate::process::Process;
-use crate::signal::{Termination, await_termination};
+use crate::signal::{Termination, TerminationListener};
 use std::process::ExitStatus;
 use std::sync::Arc;
 use std::time::Duration;
@@ -27,7 +27,11 @@ async fn terminate_child(process: &mut Process, term: Termination) -> WatchResul
     WatchResult::Terminated(term)
 }
 
-pub async fn run_watch_phase(config: &WatchConfig, mut process: Process) -> Result<WatchResult> {
+pub async fn run_watch_phase(
+    config: &WatchConfig,
+    mut process: Process,
+    term: &mut TerminationListener,
+) -> Result<WatchResult> {
     let start = Instant::now();
 
     let has_health_checks =
@@ -37,7 +41,7 @@ pub async fn run_watch_phase(config: &WatchConfig, mut process: Process) -> Resu
         debug!("no watch conditions, waiting for process to exit");
         select! {
             biased;
-            term = await_termination() => return Ok(terminate_child(&mut process, term).await),
+            term = term.recv() => return Ok(terminate_child(&mut process, term).await),
             status = process.wait() => return Ok(WatchResult::ProcessExited(status?)),
         }
     }
@@ -62,8 +66,8 @@ pub async fn run_watch_phase(config: &WatchConfig, mut process: Process) -> Resu
     select! {
         biased;
 
-        term = await_termination() => {
-            Ok(terminate_child(&mut process, term).await)
+        signal = term.recv() => {
+            Ok(terminate_child(&mut process, signal).await)
         }
 
         status = process.wait() => {

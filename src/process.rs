@@ -34,7 +34,8 @@ impl Process {
             .args(args)
             .stdin(Stdio::inherit())
             .stdout(Stdio::inherit())
-            .stderr(Stdio::inherit());
+            .stderr(Stdio::inherit())
+            .kill_on_drop(true);
 
         #[cfg(target_os = "linux")]
         configure_parent_death(&mut command);
@@ -75,7 +76,7 @@ fn configure_parent_death(command: &mut Command) {
                 return Err(std::io::Error::last_os_error());
             }
             if libc::getppid() == 1 {
-                return Err(std::io::Error::other("parent exited before child setup"));
+                return Err(std::io::Error::from_raw_os_error(libc::ESRCH));
             }
             Ok(())
         });
