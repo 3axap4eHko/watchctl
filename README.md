@@ -17,6 +17,9 @@ watchctl runs a command through three optional phases:
 If the wait phase times out, watchctl exits without starting the command.
 If a health check fails during watch phase, the process is terminated without retry.
 
+watchctl ties the child's lifetime to its own: if watchctl is terminated, the child is
+killed too, so no orphan is left behind. See [Child lifetime](#child-lifetime).
+
 ## Installation
 
 Requires Rust 1.85+ (edition 2024).
@@ -186,12 +189,31 @@ Options marked with `*` can be specified multiple times.
 | `--help` | Print help information |
 | `--version` | Print version information |
 
+## Child lifetime
+
+watchctl always kills the child process when watchctl itself exits or is terminated, so
+the child is never orphaned. Coverage depends on how watchctl is killed and on the OS:
+
+| Termination of watchctl | Linux | macOS | Windows |
+|-------------------------|-------|-------|---------|
+| Ctrl-C, `SIGTERM`/`SIGINT`/`SIGHUP`, console close | child killed | child killed | child killed |
+| `SIGKILL` (`kill -9`), `TerminateProcess`, crash | child killed | **child orphaned** | child killed |
+
+The forced-kill cases are handled by OS-level mechanisms: a Job Object with
+`JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE` on Windows, and `prctl(PR_SET_PDEATHSIG)` on Linux.
+macOS has no kernel equivalent, so a `SIGKILL` of watchctl (or a crash) cannot reap the
+child there; catchable signals are still handled.
+
+When watchctl exits because it received a signal, it uses the conventional exit code
+(130 for `SIGINT`, 143 for `SIGTERM`, 129 for `SIGHUP`).
+
 ## Exit Codes
 
 | Code | Meaning |
 |------|---------|
 | 0 | Command completed successfully |
 | 1 | Wait timeout, health check failure, watch timeout, or a command exit code of 1 |
+| 129 / 130 / 143 | watchctl terminated by SIGHUP / SIGINT / SIGTERM |
 | 2-255 | Command's exit code (clamped to this range) |
 
 ## Duration Format

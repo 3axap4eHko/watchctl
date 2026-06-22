@@ -5,6 +5,7 @@ mod duration;
 mod error;
 mod process;
 mod retry;
+mod signal;
 mod wait;
 mod watch;
 
@@ -14,7 +15,8 @@ use process::Process;
 use retry::RetryState;
 use std::fs::File;
 use std::process::ExitCode;
-use tracing::{error, info};
+use tokio::select;
+use tracing::{error, info, warn};
 use tracing_subscriber::EnvFilter;
 use tracing_subscriber::fmt::writer::BoxMakeWriter;
 use watch::WatchResult;
@@ -60,28 +62,47 @@ async fn run(args: cli::Args) -> Result<ExitCode> {
     let mut run_wait = true;
 
     loop {
-        if run_wait && let Err(e) = wait::run_wait_phase(&config.wait).await {
-            error!("wait phase failed: {e}");
-            return Err(e);
+        if run_wait {
+            select! {
+                biased;
+                term = signal::await_termination() => {
+                    warn!("received {} during wait phase, exiting", term.name);
+                    return Ok(ExitCode::from(term.exit_code));
+                }
+                result = wait::run_wait_phase(&config.wait) => {
+                    if let Err(e) = result {
+                        error!("wait phase failed: {e}");
+                        return Err(e);
+                    }
+                }
+            }
         }
 
         info!("starting command: {:?}", config.command);
         let process = Process::spawn(&config.command)?;
 
-        let result = watch::run_watch_phase(&config.watch, process).await?;
-
-        let exit_status = match result {
-            WatchResult::ProcessExited(status) => Some(status),
+        let status = match watch::run_watch_phase(&config.watch, process).await? {
+            WatchResult::ProcessExited(status) => status,
             WatchResult::HealthCheckFailed(_) | WatchResult::Timeout => {
                 return Ok(ExitCode::FAILURE);
             }
+            WatchResult::Terminated(term) => {
+                return Ok(ExitCode::from(term.exit_code));
+            }
         };
 
-        if !retry_state.should_retry(&config.retry, exit_status) {
-            return Ok(exit_code_from_status(exit_status.unwrap()));
+        if !retry_state.should_retry(&config.retry, Some(status)) {
+            return Ok(exit_code_from_status(status));
         }
 
-        retry_state.wait_before_retry(&config.retry).await;
+        select! {
+            biased;
+            term = signal::await_termination() => {
+                warn!("received {} before retry, exiting", term.name);
+                return Ok(ExitCode::from(term.exit_code));
+            }
+            _ = retry_state.wait_before_retry(&config.retry) => {}
+        }
         run_wait = config.retry.with_wait;
     }
 }

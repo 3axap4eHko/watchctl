@@ -1635,11 +1635,13 @@ version = "0.4.0"
 dependencies = [
  "clap",
  "futures",
+ "libc",
  "reqwest",
  "thiserror",
  "tokio",
  "tracing",
  "tracing-subscriber",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

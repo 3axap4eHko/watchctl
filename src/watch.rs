@@ -2,6 +2,7 @@ use crate::check::{Check, FileCheck, HttpCheck, TcpCheck, build_http_client};
 use crate::config::WatchConfig;
 use crate::error::Result;
 use crate::process::Process;
+use crate::signal::{Termination, await_termination};
 use std::process::ExitStatus;
 use std::sync::Arc;
 use std::time::Duration;
@@ -15,6 +16,15 @@ pub enum WatchResult {
     #[allow(dead_code)]
     HealthCheckFailed(String),
     Timeout,
+    Terminated(Termination),
+}
+
+async fn terminate_child(process: &mut Process, term: Termination) -> WatchResult {
+    warn!("received {}, terminating child process", term.name);
+    if let Err(e) = process.kill_and_wait().await {
+        warn!("failed to kill process: {e}");
+    }
+    WatchResult::Terminated(term)
 }
 
 pub async fn run_watch_phase(config: &WatchConfig, mut process: Process) -> Result<WatchResult> {
@@ -25,8 +35,11 @@ pub async fn run_watch_phase(config: &WatchConfig, mut process: Process) -> Resu
 
     if !has_health_checks && config.timeout.is_none() {
         debug!("no watch conditions, waiting for process to exit");
-        let status = process.wait().await?;
-        return Ok(WatchResult::ProcessExited(status));
+        select! {
+            biased;
+            term = await_termination() => return Ok(terminate_child(&mut process, term).await),
+            status = process.wait() => return Ok(WatchResult::ProcessExited(status?)),
+        }
     }
 
     let watch_future = async {
@@ -47,6 +60,12 @@ pub async fn run_watch_phase(config: &WatchConfig, mut process: Process) -> Resu
     };
 
     select! {
+        biased;
+
+        term = await_termination() => {
+            Ok(terminate_child(&mut process, term).await)
+        }
+
         status = process.wait() => {
             let status = status?;
             info!("process exited with {:?} after {:?}", status.code(), start.elapsed());
